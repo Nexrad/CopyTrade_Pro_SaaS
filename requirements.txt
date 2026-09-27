@@ -1,0 +1,17 @@
+# Verified in this project's sandbox (stdlib + these two only):
+cryptography      # MT5 password encryption at rest
+itsdangerous      # signed session tokens
+
+# Required for real deployment, NOT installable/testable in this
+# project's build sandbox (no network access there) - install these
+# on your actual machine:
+telethon          # Telegram listener (integrations/telegram_listener.py)
+MetaTrader5       # Windows-only; real MT5 execution (workers/mt5_executor.py)
+
+# Only needed if/when you migrate off the stdlib HTTP layer + SQLite
+# (see README's "Framework choice" section):
+# fastapi
+# uvicorn[standard]
+# sqlalchemy>=2.0
+# alembic
+# psycopg2-binary
