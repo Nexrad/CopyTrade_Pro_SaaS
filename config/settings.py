@@ -37,6 +37,9 @@ IS_PRODUCTION = ENVIRONMENT == "production"
 
 STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 RECEIPTS_DIR = os.path.join(STORAGE_DIR, "receipts")
+# An empty DATABASE_PATH (e.g. "DATABASE_PATH=" in .env) must NOT override the
+# default location - os.getenv's `default` argument only kicks in when the
+# variable is unset, not when it's set-but-empty. `or` fixes that.
 DB_PATH = os.getenv("DATABASE_PATH") or os.path.join(STORAGE_DIR, "copytrade.db")
 # Postgres target for production is documented in README/requirements.txt.
 # This MVP's database/db.py speaks plain SQL against sqlite3 directly;
@@ -74,6 +77,14 @@ CHALLENGE_DURATION_DAYS = int(os.getenv("CHALLENGE_DURATION_DAYS", "30"))
 # --- Web server ---
 HTTP_HOST = os.getenv("HTTP_HOST", "127.0.0.1")
 HTTP_PORT = int(os.getenv("HTTP_PORT", "8000"))
+
+# --- CORS ---
+# The frontend (Vite/TanStack dev server) runs on a different origin/port
+# than this API, so the browser enforces CORS. Credentialed requests (the
+# HttpOnly session_token cookie) require an exact origin - "*" is rejected
+# by browsers whenever credentials are involved, so this must be a literal
+# scheme+host+port. Comma-separate multiple origins if needed.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:8080").split(",") if o.strip()]
 
 # --- Payment methods shown to customers (admin-configurable text) ---
 PAYMENT_INSTRUCTIONS = {

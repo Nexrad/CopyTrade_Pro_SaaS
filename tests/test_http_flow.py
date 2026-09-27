@@ -112,6 +112,88 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["mt5_account"]["login"], "1001")
 
+    def test_change_password_http(self):
+        c = self._client()
+        c.request("POST", "/auth/register", {"email": "http4@example.com", "password": "StrongPassword123"})
+
+        status, payload = c.request(
+            "POST",
+            "/auth/change-password",
+            {"current_password": "WrongPassword999", "new_password": "NewStrongPassword456"},
+        )
+        self.assertEqual(status, 401)
+
+        status, payload = c.request(
+            "POST",
+            "/auth/change-password",
+            {"current_password": "StrongPassword123", "new_password": "NewStrongPassword456"},
+        )
+        self.assertEqual(status, 200)
+
+        c.request("POST", "/auth/logout")
+        status, payload = c.request(
+            "POST", "/auth/login", {"email": "http4@example.com", "password": "NewStrongPassword456"}
+        )
+        self.assertEqual(status, 200)
+
+    def test_change_password_requires_auth(self):
+        c = self._client()
+        status, payload = c.request(
+            "POST", "/auth/change-password", {"current_password": "a", "new_password": "NewStrongPassword456"}
+        )
+        self.assertEqual(status, 401)
+
+    def test_payment_info_http(self):
+        c = self._client()
+        c.request("POST", "/auth/register", {"email": "http5@example.com", "password": "StrongPassword123"})
+
+        status, payload = c.request("GET", "/customer/payment-info")
+        self.assertEqual(status, 200)
+        self.assertIn("challenge_price", payload)
+        self.assertIn("payment_instructions", payload)
+        self.assertEqual(set(payload["methods"]), {"telebirr", "cbe"})
+
+    def test_payment_info_requires_auth(self):
+        c = self._client()
+        status, payload = c.request("GET", "/customer/payment-info")
+        self.assertEqual(status, 401)
+
+    def test_provider_toggle_http(self):
+        c = self._client()
+        c.request("POST", "/auth/register", {"email": "http6@example.com", "password": "StrongPassword123"})
+
+        status, payload = c.request("POST", "/customer/provider-toggle", {"enabled": False})
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["provider_enabled"])
+
+        status, payload = c.request("GET", "/customer/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["settings"]["provider_enabled"], 0)
+
+    def test_admin_can_reach_admin_routes(self):
+        c = self._client()
+        status, payload = c.request(
+            "POST", "/auth/register", {"email": "httpadmin@example.com", "password": "StrongPassword123"}
+        )
+        # Promote directly in the DB, mirroring how a real admin account is provisioned.
+        from database.db import get_conn
+
+        conn = get_conn()
+        conn.execute("UPDATE users SET role='admin' WHERE id=?", (payload["id"],))
+        conn.commit()
+
+        status, payload = c.request("GET", "/admin/customers")
+        self.assertEqual(status, 200)
+        self.assertIn("customers", payload)
+
+        status, payload = c.request("GET", "/admin/system/health")
+        self.assertEqual(status, 200)
+
+        status, payload = c.request("GET", "/admin/trading/overview")
+        self.assertEqual(status, 200)
+        self.assertIn("open_trades", payload)
+        self.assertIn("active_customers", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

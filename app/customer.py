@@ -129,6 +129,19 @@ def set_provider_enabled(conn, user_id: str, enabled: bool):
 
 # ---------- Payments ----------
 
+def payment_info() -> dict:
+    """
+    Static, admin-configured (via .env) payment instructions/price - not
+    customer-specific, but the frontend has no other way to get this text
+    without hardcoding it, which would violate "never invent data".
+    """
+    return {
+        "challenge_price": settings.CHALLENGE_PRICE,
+        "payment_instructions": dict(settings.PAYMENT_INSTRUCTIONS),
+        "methods": list(settings.PAYMENT_INSTRUCTIONS.keys()),
+    }
+
+
 def submit_payment(conn, user_id: str, method: str, claimed_amount, receipt_filename: str, receipt_b64: str) -> dict:
     if method not in ("telebirr", "cbe"):
         raise CustomerError("Unsupported payment method")

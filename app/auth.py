@@ -82,6 +82,23 @@ def logout(conn, user_id: str):
     conn.commit()
 
 
+def change_password(conn, user_id: str, current_password: str, new_password: str) -> None:
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        raise AuthError("Not authenticated", status=401)
+    if not verify_password(current_password, row["password_hash"]):
+        raise AuthError("Current password is incorrect", status=401)
+    if len(new_password) < 10:
+        raise AuthError("New password must be at least 10 characters")
+
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (hash_password(new_password), user_id),
+    )
+    _audit(conn, user_id, "change_password")
+    conn.commit()
+
+
 def current_user(conn, token: Optional[str]) -> Optional[dict]:
     if not token:
         return None

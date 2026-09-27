@@ -43,11 +43,30 @@ class HttpError(Exception):
         self.message = message
 
 
-def _json_response(start_response, status: int, payload: dict, set_cookie: str = None):
+def _cors_headers(environ) -> list:
+    """
+    Access-Control-Allow-Origin must echo back one exact allowed origin (never
+    "*") because the frontend sends the session cookie on every request
+    (credentials: "include"), and browsers refuse wildcard-origin CORS
+    responses on credentialed requests.
+    """
+    origin = environ.get("HTTP_ORIGIN")
+    if origin and origin in settings.CORS_ORIGINS:
+        return [
+            ("Access-Control-Allow-Origin", origin),
+            ("Access-Control-Allow-Credentials", "true"),
+            ("Vary", "Origin"),
+        ]
+    return []
+
+
+def _json_response(start_response, status: int, payload: dict, set_cookie: str = None, environ: dict = None):
     body = json.dumps(payload).encode()
     headers = [("Content-Type", "application/json"), ("Content-Length", str(len(body)))]
     if set_cookie:
         headers.append(("Set-Cookie", set_cookie))
+    if environ is not None:
+        headers.extend(_cors_headers(environ))
     status_line = f"{status} {'OK' if status < 400 else 'ERROR'}"
     start_response(status_line, headers)
     return [body]
@@ -81,8 +100,18 @@ def _set_cookie_header(name: str, value: str) -> str:
     jar[name] = value
     jar[name]["path"] = "/"
     jar[name]["httponly"] = True
-    if settings.IS_PRODUCTION:
-        jar[name]["secure"] = True
+    # The frontend (http://localhost:8080) and this API (http://127.0.0.1:8000)
+    # are different hosts, so browsers treat every request between them as
+    # cross-site - a plain (default SameSite=Lax) cookie would silently be
+    # dropped from fetch()/XHR calls. SameSite=None is what tells the browser
+    # to send it anyway, but browsers require SameSite=None cookies to also be
+    # Secure. Secure cookies still work here without TLS because Chrome/
+    # Firefox/Safari treat 127.0.0.1/localhost as "potentially trustworthy"
+    # origins even over plain http - this is the standard way to run a
+    # split frontend/backend on localhost, not a weakening of the cookie's
+    # protection (HttpOnly still blocks JS access either way).
+    jar[name]["samesite"] = "None"
+    jar[name]["secure"] = True
     return jar[name].OutputString()
 
 
@@ -133,6 +162,16 @@ def _logout(environ, conn, match):
     return 200, {"ok": True}, cookie
 
 
+@route("POST", r"/auth/change-password")
+def _change_password(environ, conn, match):
+    user = _require_user(environ, conn)
+    body = _read_json_body(environ)
+    auth_svc.change_password(
+        conn, user["id"], body.get("current_password", ""), body.get("new_password", "")
+    )
+    return 200, {"ok": True}, None
+
+
 # ---------------- Customer routes ----------------
 
 @route("GET", r"/customer/status")
@@ -175,6 +214,23 @@ def _customer_copy_toggle(environ, conn, match):
     body = _read_json_body(environ)
     customer_svc.set_copy_enabled(conn, user["id"], bool(body.get("enabled")))
     return 200, {"copy_enabled": bool(body.get("enabled"))}, None
+
+
+# customer_svc.set_provider_enabled already existed (and was tested) but had
+# no route - the frontend's Risk Settings page needs to toggle the provider,
+# so this wires it up the same way copy-toggle is wired above.
+@route("POST", r"/customer/provider-toggle")
+def _customer_provider_toggle(environ, conn, match):
+    user = _require_user(environ, conn)
+    body = _read_json_body(environ)
+    customer_svc.set_provider_enabled(conn, user["id"], bool(body.get("enabled")))
+    return 200, {"provider_enabled": bool(body.get("enabled"))}, None
+
+
+@route("GET", r"/customer/payment-info")
+def _customer_payment_info(environ, conn, match):
+    _require_user(environ, conn)
+    return 200, customer_svc.payment_info(), None
 
 
 @route("POST", r"/customer/payments")
@@ -276,6 +332,18 @@ def _health(environ, conn, match):
 def application(environ, start_response):
     method = environ["REQUEST_METHOD"]
     path = environ["PATH_INFO"]
+
+    # Preflight: the browser sends this before any cross-origin request that
+    # carries a JSON body or credentials, and expects a bodyless 204 back -
+    # it never reaches a real route handler.
+    if method == "OPTIONS":
+        headers = _cors_headers(environ)
+        headers.append(("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"))
+        headers.append(("Access-Control-Allow-Headers", "Content-Type"))
+        headers.append(("Content-Length", "0"))
+        start_response("204 No Content", headers)
+        return [b""]
+
     conn = get_conn()
 
     for route_method, pattern, handler in _ROUTES:
@@ -286,12 +354,12 @@ def application(environ, start_response):
             continue
         try:
             status, payload, cookie = handler(environ, conn, m)
-            return _json_response(start_response, status, payload, cookie)
+            return _json_response(start_response, status, payload, cookie, environ)
         except HttpError as e:
-            return _json_response(start_response, e.status, {"error": e.message})
+            return _json_response(start_response, e.status, {"error": e.message}, environ=environ)
         except (auth_svc.AuthError, customer_svc.CustomerError, admin_svc.AdminError) as e:
-            return _json_response(start_response, e.status, {"error": str(e)})
+            return _json_response(start_response, e.status, {"error": str(e)}, environ=environ)
         except Exception as e:  # noqa: BLE001 - last resort, never leak internals
-            return _json_response(start_response, 500, {"error": "internal error", "detail": str(e) if not settings.IS_PRODUCTION else None})
+            return _json_response(start_response, 500, {"error": "internal error", "detail": str(e) if not settings.IS_PRODUCTION else None}, environ=environ)
 
-    return _json_response(start_response, 404, {"error": "not found"})
+    return _json_response(start_response, 404, {"error": "not found"}, environ=environ)

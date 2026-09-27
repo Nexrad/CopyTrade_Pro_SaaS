@@ -45,6 +45,28 @@ class TestAuthFlow(unittest.TestCase):
     def test_invalid_token_resolves_to_none(self):
         self.assertIsNone(auth_svc.current_user(self.conn, "garbage-token"))
 
+    def test_change_password_then_login_with_new_password(self):
+        reg = auth_svc.register(self.conn, "frank@example.com", "StrongPassword123")
+        auth_svc.change_password(self.conn, reg["id"], "StrongPassword123", "EvenStrongerPassword456")
+
+        with self.assertRaises(auth_svc.AuthError):
+            auth_svc.login(self.conn, "frank@example.com", "StrongPassword123")
+
+        login = auth_svc.login(self.conn, "frank@example.com", "EvenStrongerPassword456")
+        self.assertEqual(login["email"], "frank@example.com")
+
+    def test_change_password_rejects_wrong_current_password(self):
+        reg = auth_svc.register(self.conn, "grace@example.com", "StrongPassword123")
+        with self.assertRaises(auth_svc.AuthError):
+            auth_svc.change_password(self.conn, reg["id"], "TotallyWrongPassword", "EvenStrongerPassword456")
+        # original password must still work
+        auth_svc.login(self.conn, "grace@example.com", "StrongPassword123")
+
+    def test_change_password_rejects_short_new_password(self):
+        reg = auth_svc.register(self.conn, "heidi@example.com", "StrongPassword123")
+        with self.assertRaises(auth_svc.AuthError):
+            auth_svc.change_password(self.conn, reg["id"], "StrongPassword123", "short")
+
 
 class TestCustomerIsolation(unittest.TestCase):
     """Customer A must never see or affect Customer B's data (spec section 16)."""
